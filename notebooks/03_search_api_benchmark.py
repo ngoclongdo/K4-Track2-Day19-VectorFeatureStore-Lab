@@ -30,31 +30,21 @@ import httpx
 
 # %%
 ROOT = Path(_setup.__file__).resolve().parent.parent
-proc = subprocess.Popen(
-    ["uvicorn", "app.main:app", "--port", "8000", "--log-level", "warning"],
-    cwd=str(ROOT),
-)
+from starlette.testclient import TestClient
+from app.main import app
 
-# Đợi server up + warm (Searcher.from_corpus loads embeddings + indexes 1000 docs)
-URL = "http://localhost:8000"
-for _ in range(60):
-    try:
-        r = httpx.get(f"{URL}/healthz", timeout=2.0)
-        if r.status_code == 200 and r.json().get("ready"):
-            break
-    except httpx.HTTPError:
-        pass
-    time.sleep(1)
-else:
-    raise RuntimeError("API didn't become ready within 60s")
+client = TestClient(app)
+client.__enter__()
 
-print(httpx.get(f"{URL}/healthz").json())
+# Kiểm tra /healthz
+r = client.get("/healthz")
+print(r.json())
 
 # %% [markdown]
 # ## 2. Single query — kiểm tra response shape
 
 # %%
-r = httpx.get(f"{URL}/search", params={"q": "cloud computing tự động mở rộng", "mode": "hybrid"})
+r = client.get("/search", params={"q": "cloud computing tự động mở rộng", "mode": "hybrid"})
 r.raise_for_status()
 body = r.json()
 print(f"latency_ms: {body['latency_ms']:.1f}")
@@ -91,7 +81,7 @@ def benchmark_mode(mode: str, reps: int = 2) -> dict[str, float]:
     for _ in range(reps):
         for q in golden:
             t0 = time.perf_counter()
-            r = httpx.get(f"{URL}/search", params={"q": q["query"], "mode": mode})
+            r = client.get("/search", params={"q": q["query"], "mode": mode})
             wall_latencies.append((time.perf_counter() - t0) * 1000)
             server_latencies.append(r.json()["latency_ms"])
     return {
@@ -127,8 +117,7 @@ else:
 # ## 5. Cleanup — stop the API server
 
 # %%
-proc.terminate()
-proc.wait(timeout=5)
+client.__exit__(None, None, None)
 print("API server stopped")
 
 # %% [markdown]
